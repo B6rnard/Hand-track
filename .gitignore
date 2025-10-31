@@ -47,3 +47,4 @@ desktop.ini
 
 # Log files
 *.log
+.gitignore
