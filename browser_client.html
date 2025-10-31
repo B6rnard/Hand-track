@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Hand Pose WS Viewer</title>
+  <style>
+    body { margin: 0; background: #111; color: #eee; font-family: sans-serif; }
+    #controls { padding: 8px; }
+    canvas { display:block; margin: 0 auto; background: #222; max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <span>WebSocket: <span id="status">disconnected</span></span>
+  </div>
+  <canvas id="cv" width="1280" height="720"></canvas>
+  <script>
+    const canvas = document.getElementById('cv');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const ws = new WebSocket('ws://localhost:8765');
+
+    ws.onopen = () => { statusEl.textContent = 'connected'; statusEl.style.color = 'lightgreen'; };
+    ws.onclose = () => { statusEl.textContent = 'closed'; statusEl.style.color = 'salmon'; };
+    ws.onerror = (e) => { statusEl.textContent = 'error'; statusEl.style.color = 'orange'; console.error(e); };
+
+    const HAND_CONNECTIONS = [
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [0,9],[9,10],[10,11],[11,12],
+      [0,13],[13,14],[14,15],[15,16],
+      [0,17],[17,18],[18,19],[19,20]
+    ];
+
+    function drawFrame(msg) {
+      // msg.tracks: {id: {keypoints: [[x,y]...], confs: [...]}, ...}
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // background grid
+      ctx.fillStyle = '#222';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      // Precompute canvas dimensions
+      const w = canvas.width, h = canvas.height;
+
+      for (const [id, t] of Object.entries(msg.tracks || {})) {
+        const kps = t.keypoints;
+        if (!kps || kps.length < 21) continue;
+        // choose color per id
+        const hue = (parseInt(id) * 47) % 360;
+        const strokeStyle = `hsl(${hue} 80% 60%)`;
+        const fillStyle = `hsl(${hue} 80% 60%)`;
+        ctx.save();
+        ctx.strokeStyle = strokeStyle;
+        ctx.fillStyle = fillStyle;
+        ctx.lineWidth = 2;
+
+        // Draw all bones in one path for efficiency
+        ctx.beginPath();
+        for (let i = 0; i < HAND_CONNECTIONS.length; i++) {
+          const [a, b] = HAND_CONNECTIONS[i];
+          const ax = kps[a][0] * w, ay = kps[a][1] * h;
+          const bx = kps[b][0] * w, by = kps[b][1] * h;
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+        }
+        ctx.stroke();
+
+        // Draw all joints in one path
+        ctx.beginPath();
+        for (let i = 0; i < kps.length; i++) {
+          const x = kps[i][0] * w, y = kps[i][1] * h;
+          ctx.moveTo(x + 4, y);
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+        }
+        ctx.fill();
+
+        // id text at wrist
+        const wrist = kps[0];
+        ctx.fillStyle = '#fff';
+        ctx.font = '18px sans-serif';
+        ctx.fillText('ID:' + id, wrist[0] * w + 6, wrist[1] * h - 6);
+
+        ctx.restore();
+      }
+    }
+
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        drawFrame(msg);
+      } catch (e) {
+        console.error('Failed to parse message', e);
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+.env
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+.vs/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Video files and images
+*.mp4
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Log files
+*.log
