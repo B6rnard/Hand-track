@@ -1,4 +1,4 @@
-# Hand Pose Detection with MediaPipe (unfinished)
+# Hand Pose Detection with MediaPipe (unfinished but works)
 
 Real-time hand skeleton tracking using MediaPipe, with WebSocket streaming and browser visualization.
 
