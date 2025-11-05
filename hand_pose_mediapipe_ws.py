@@ -262,86 +262,79 @@ def main(args):
             h,w = frame.shape[:2]
 
             # run mediapipe (expects RGB)
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = hands.process(rgb)
+            if frame is not None and frame.size > 0:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = hands.process(rgb)
+            else:
+                results = None
 
-            detections = []  # build list of detections: {'keypoints': [[x,y]...], 'wrist':(x,y), 'handedness':str}
-            if results.multi_hand_landmarks:
-                # get handedness if present
-                handedness = []
-                if results.multi_handedness:
-                    for hh in results.multi_handedness:
-                        label = hh.classification[0].label if hh.classification else None
-                        handedness.append(label)
+            # Preallocate for speed
+            detections = []
+            handedness = []
+            multi_hand_landmarks = getattr(results, "multi_hand_landmarks", None)
+            multi_handedness = getattr(results, "multi_handedness", None)
+
+            if multi_hand_landmarks:
+                if multi_handedness:
+                    handedness = [
+                        hh.classification[0].label if hh.classification else None
+                        for hh in multi_handedness
+                    ]
                 else:
-                    handedness = [None]*len(results.multi_hand_landmarks)
+                    handedness = [None] * len(multi_hand_landmarks)
 
-                for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                    # each landmark has x,y,z normalized (x,y in [0,1])
-                    kps = []
-                    for lm in hand_landmarks.landmark:
-                        kps.append([float(lm.x), float(lm.y)])  # normalized
+                # Use numpy for keypoint extraction for speed
+                for idx, hand_landmarks in enumerate(multi_hand_landmarks):
+                    kps = np.array(
+                        [[lm.x, lm.y] for lm in hand_landmarks.landmark], dtype=np.float32
+                    )
                     wrist = kps[0]
-                    detections.append({"keypoints": kps, "wrist": tuple(wrist), "handedness": handedness[idx]})
-
-            # match detections to track IDs
-            assigned_ids = tracker.match(detections) if detections else []
-            alive_ids = set()
+                    detections.append(
+                        {
+                            "keypoints": kps,
+                            "wrist": tuple(wrist),
+                            "handedness": handedness[idx],
+                        }
+                    )
 
             payload_tracks = {}
-            for det, tid in zip(detections, assigned_ids):
-                alive_ids.add(tid)
+            for det in detections:
                 kps_norm = det["keypoints"]
-                confs = [None]*21  # MediaPipe doesn't provide per-landmark confidence
-                # initialize Kalman filters if needed
-                if tid not in track_filters:
-                    kfs = []
-                    for j in range(21):
-                        x0 = kps_norm[j][0] if kps_norm[j][0] is not None else 0.0
-                        y0 = kps_norm[j][1] if kps_norm[j][1] is not None else 0.0
-                        kf = Kalman2D(x=x0, y=y0, dt=1.0/max(1.0, fps))
-                        kfs.append(kf)
-                    track_filters[tid] = kfs
+                # initialize Kalman filters if needed (one per hand, not per id)
+                if "kf" not in det:
+                    kfs = [
+                        Kalman2D(
+                            x=kps_norm[j][0] if kps_norm[j][0] is not None else 0.0,
+                            y=kps_norm[j][1] if kps_norm[j][1] is not None else 0.0,
+                            dt=1.0 / max(1.0, fps),
+                        )
+                        for j in range(21)
+                    ]
+                    det["kf"] = kfs
                 else:
-                    # update dt for all
-                    for kf in track_filters[tid]:
-                        kf.dt = 1.0 / max(1.0, fps)
-                        kf.F[0,2] = kf.dt
-                        kf.F[1,3] = kf.dt
+                    dt = 1.0 / max(1.0, fps)
+                    for kf in det["kf"]:
+                        kf.dt = dt
+                        kf.F[0, 2] = dt
+                        kf.F[1, 3] = dt
 
-                kfs = track_filters[tid]
-                smoothed = []
+                kfs = det["kf"]
+                smoothed = np.empty((21, 2), dtype=np.float32)
                 for j in range(21):
                     kf = kfs[j]
                     kf.predict()
                     meas = kps_norm[j]
-                    # no per-landmark confidence; use 1.0
                     pt = kf.update(meas, meas_conf=1.0)
-                    # clamp
-                    px = float(min(max(pt[0], 0.0), 1.0))
-                    py = float(min(max(pt[1], 0.0), 1.0))
-                    smoothed.append([px, py])
-                last_seen[tid] = t
+                    smoothed[j, 0] = min(max(pt[0], 0.0), 1.0)
+                    smoothed[j, 1] = min(max(pt[1], 0.0), 1.0)
 
                 # draw
-                draw_skeleton(frame, smoothed, id_text=tid)
+                draw_skeleton(frame, smoothed.tolist())
 
-                payload_tracks[str(tid)] = {
-                    "id": tid,
-                    "keypoints": smoothed,
-                    "handedness": det.get("handedness")
+                payload_tracks[str(len(payload_tracks))] = {
+                    "keypoints": smoothed.tolist(),
+                    "handedness": det.get("handedness"),
                 }
-
-            # cleanup stale tracks
-            # consider a track stale if not seen for timeout
-            stale = [tid for tid, last in list(last_seen.items()) if (t - last) > args.track_timeout]
-            for tid in stale:
-                track_filters.pop(tid, None)
-                last_seen.pop(tid, None)
-                tracker.tracks.pop(tid, None)
-
-            # also remove tracker entries that are not alive (keeps memory small)
-            tracker.remove_stale(alive_ids)
 
             msg = {"timestamp": t, "frame": frame_idx, "tracks": payload_tracks}
             try:
