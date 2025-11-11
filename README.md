@@ -1,4 +1,5 @@
 # Hand Pose Detection with MediaPipe
+more or less opimized
 
 Real-time hand skeleton tracking using MediaPipe, with WebSocket streaming capabilities. The system tracks 21 hand landmarks and provides smooth tracking using Kalman filtering.
 
